@@ -21,10 +21,10 @@ FROM nginx:alpine
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY <<EOF /etc/nginx/conf.d/default.conf
+# Copy nginx configuration template
+COPY <<'EOF' /etc/nginx/templates/default.conf.template
 server {
-    listen 80;
+    listen ${PORT:-80};
     server_name localhost;
     root /usr/share/nginx/html;
     index index.html;
@@ -35,7 +35,7 @@ server {
 
     # Handle SPA routing - serve index.html for all routes
     location / {
-        try_files \$uri \$uri/ /index.html;
+        try_files $uri $uri/ /index.html;
     }
 
     # Cache static assets
@@ -46,6 +46,4 @@ server {
 }
 EOF
 
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["sh", "-c", "envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
