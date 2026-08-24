@@ -51,7 +51,6 @@ func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client, log logf.Logger) (*
 	}, nil
 }
 
-
 // Run starts the worker and processes jobs until context is cancelled
 func (w *Worker) Run(ctx context.Context) error {
 	w.Log.Info("Worker starting")
@@ -250,24 +249,28 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 
 	// Handle header component (for media templates)
 	if template.HeaderType != "" && template.HeaderType != "TEXT" {
-		// Use campaign's uploaded media ID if available
-		if campaignHeaderMediaID != "" {
-			headerParam := buildMediaParameter(template.HeaderType, "id", campaignHeaderMediaID)
+		// Prefer the campaign's own uploaded media ID if available, otherwise
+		// fall back to the media ID captured when the template's header image
+		// was uploaded. NOTE: template.HeaderContent is NOT usable here - it
+		// holds Meta's one-time resumable-upload "handle" from template
+		// creation/approval, which is only valid for that registration call.
+		// Reusing it as a send-time "link" (as this used to do) silently
+		// produces a message with a missing/broken image.
+		mediaID := campaignHeaderMediaID
+		if mediaID == "" {
+			mediaID = template.HeaderMediaID
+		}
+		if mediaID != "" {
+			headerParam := buildMediaParameter(template.HeaderType, "id", mediaID)
 			if headerParam != nil {
 				components = append(components, map[string]interface{}{
 					"type":       "header",
 					"parameters": []map[string]interface{}{headerParam},
 				})
 			}
-		} else if template.HeaderContent != "" {
-			// Fall back to template's header content (URL)
-			headerParam := buildMediaParameter(template.HeaderType, "link", template.HeaderContent)
-			if headerParam != nil {
-				components = append(components, map[string]interface{}{
-					"type":       "header",
-					"parameters": []map[string]interface{}{headerParam},
-				})
-			}
+		} else {
+			w.Log.Warn("Template has a media header but no usable media ID; sending without header media",
+				"template", template.Name, "header_type", template.HeaderType)
 		}
 	}
 
@@ -319,4 +322,3 @@ func (w *Worker) Close() error {
 	}
 	return nil
 }
-

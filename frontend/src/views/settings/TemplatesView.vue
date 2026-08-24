@@ -40,6 +40,7 @@ interface Template {
   status: string
   header_type: string
   header_content: string
+  header_media_id: string
   body_content: string
   footer_content: string
   buttons: any[]
@@ -82,6 +83,7 @@ const formData = ref({
   category: 'UTILITY',
   header_type: 'NONE',
   header_content: '',
+  header_media_id: '',
   body_content: '',
   footer_content: '',
   buttons: [] as any[],
@@ -227,6 +229,7 @@ function openCreateDialog() {
     category: 'UTILITY',
     header_type: 'NONE',
     header_content: '',
+    header_media_id: '',
     body_content: '',
     footer_content: '',
     buttons: [],
@@ -249,6 +252,7 @@ function openEditDialog(template: Template) {
     category: template.category,
     header_type: template.header_type || 'NONE',
     header_content: template.header_content || '',
+    header_media_id: template.header_media_id || '',
     body_content: template.body_content,
     footer_content: template.footer_content || '',
     buttons: template.buttons || [],
@@ -435,9 +439,10 @@ function onHeaderMediaFileChange(event: Event) {
   if (input.files && input.files.length > 0) {
     headerMediaFile.value = input.files[0]
     headerMediaFilename.value = input.files[0].name
-    // Clear previous handle when new file is selected
+    // Clear previous handle/media id when new file is selected
     headerMediaHandle.value = ''
     formData.value.header_content = ''
+    formData.value.header_media_id = ''
   }
 }
 
@@ -455,10 +460,16 @@ async function uploadHeaderMedia() {
 
   headerMediaUploading.value = true
   try {
-    const response = await templatesService.uploadMedia(formData.value.whatsapp_account, headerMediaFile.value)
+    // When editing an existing template, pass its id so the backend can
+    // backfill header_media_id directly without flipping an APPROVED
+    // template back to DRAFT (see UploadTemplateMedia).
+    const response = await templatesService.uploadMedia(formData.value.whatsapp_account, headerMediaFile.value, editingTemplate.value?.id)
     const data = response.data.data
     headerMediaHandle.value = data.handle
     formData.value.header_content = data.handle
+    // The reusable media ID actually used when sending messages later (the
+    // handle above is only valid for template creation/approval)
+    formData.value.header_media_id = data.media_id || ''
     toast.success(t('templates.mediaUploadedSuccess'))
   } catch (error) {
     toast.error(getErrorMessage(error, t('templates.uploadFailed')))

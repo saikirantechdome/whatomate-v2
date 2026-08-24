@@ -21,6 +21,7 @@ type TemplateRequest struct {
 	Category        string        `json:"category" validate:"required"` // MARKETING, UTILITY, AUTHENTICATION
 	HeaderType      string        `json:"header_type"`                  // TEXT, IMAGE, DOCUMENT, VIDEO, NONE
 	HeaderContent   string        `json:"header_content"`
+	HeaderMediaID   string        `json:"header_media_id"` // WhatsApp media ID for IMAGE/VIDEO/DOCUMENT headers, used when sending messages
 	BodyContent     string        `json:"body_content" validate:"required"`
 	FooterContent   string        `json:"footer_content"`
 	Buttons         []interface{} `json:"buttons"`
@@ -39,6 +40,7 @@ type TemplateResponse struct {
 	Status          string        `json:"status"`
 	HeaderType      string        `json:"header_type"`
 	HeaderContent   string        `json:"header_content"`
+	HeaderMediaID   string        `json:"header_media_id"`
 	BodyContent     string        `json:"body_content"`
 	FooterContent   string        `json:"footer_content"`
 	Buttons         []interface{} `json:"buttons"`
@@ -143,6 +145,7 @@ func (a *App) CreateTemplate(r *fastglue.Request) error {
 		Status:          "DRAFT", // Local draft until submitted to Meta
 		HeaderType:      strings.ToUpper(req.HeaderType),
 		HeaderContent:   req.HeaderContent,
+		HeaderMediaID:   req.HeaderMediaID,
 		BodyContent:     req.BodyContent,
 		FooterContent:   req.FooterContent,
 		Buttons:         convertToJSONBArray(req.Buttons),
@@ -218,6 +221,7 @@ func (a *App) UpdateTemplate(r *fastglue.Request) error {
 		template.HeaderType = strings.ToUpper(req.HeaderType)
 	}
 	template.HeaderContent = req.HeaderContent
+	template.HeaderMediaID = req.HeaderMediaID
 	if req.BodyContent != "" {
 		template.BodyContent = req.BodyContent
 	}
@@ -482,6 +486,7 @@ func templateToResponse(t models.Template) TemplateResponse {
 		Status:          t.Status,
 		HeaderType:      t.HeaderType,
 		HeaderContent:   t.HeaderContent,
+		HeaderMediaID:   t.HeaderMediaID,
 		BodyContent:     t.BodyContent,
 		FooterContent:   t.FooterContent,
 		Buttons:         convertFromJSONBArray(t.Buttons),
@@ -588,7 +593,10 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 	// Create whatsapp account with AppID
 	waAccount := a.toWhatsAppAccount(&account)
 
-	// Perform resumable upload to get handle
+	// Perform resumable upload to get a handle - this is required for template
+	// creation/approval (Meta's "example.header_handle"), but the handle is only
+	// valid for that one-time registration call. It cannot be reused later to
+	// actually send messages.
 	ctx := context.Background()
 	handle, err := a.WhatsApp.ResumableUpload(ctx, waAccount, fileData, mimeType, fileHeader.Filename)
 	if err != nil {
@@ -596,8 +604,36 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to upload media to Meta", nil, "")
 	}
 
+	// Also upload via the standard Media API to get a real, reusable media ID.
+	// This is what actually gets attached to outgoing template messages later
+	// (see worker.sendTemplateMessage). Best-effort: if this fails, template
+	// creation can still proceed using the handle above, but sends will need a
+	// per-campaign media upload until this media ID is captured.
+	mediaID, mediaErr := a.WhatsApp.UploadMedia(ctx, waAccount, fileData, mimeType, fileHeader.Filename)
+	if mediaErr != nil {
+		a.Log.Error("Failed to upload template media via Media API", "error", mediaErr)
+	}
+
+	// If editing an existing template, persist the media ID directly as a
+	// local bookkeeping update. Deliberately bypasses UpdateTemplate here so
+	// that backfilling a media ID on an already-APPROVED template (e.g. one
+	// that predates this fix and only has the unusable creation-time handle)
+	// doesn't flip its status back to DRAFT - nothing Meta-relevant changed.
+	if mediaID != "" {
+		if templateID := string(r.RequestCtx.FormValue("template_id")); templateID != "" {
+			if tid, parseErr := uuid.Parse(templateID); parseErr == nil {
+				if err := a.DB.Model(&models.Template{}).
+					Where("id = ? AND organization_id = ?", tid, orgID).
+					Update("header_media_id", mediaID).Error; err != nil {
+					a.Log.Error("Failed to backfill template header_media_id", "error", err, "template_id", tid)
+				}
+			}
+		}
+	}
+
 	return r.SendEnvelope(map[string]interface{}{
 		"handle":    handle,
+		"media_id":  mediaID,
 		"filename":  fileHeader.Filename,
 		"mime_type": mimeType,
 		"size":      fileHeader.Size,

@@ -222,10 +222,13 @@ export const templatesService = {
   update: (id: string, data: any) => api.put(`/templates/${id}`, data),
   delete: (id: string) => api.delete(`/templates/${id}`),
   sync: () => api.post('/templates/sync'),
-  uploadMedia: (accountName: string, file: File) => {
+  uploadMedia: (accountName: string, file: File, templateId?: string) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('account', accountName)
+    if (templateId) {
+      formData.append('template_id', templateId)
+    }
     const csrfToken = getCookie('whm_csrf')
     return axios.post(`${api.defaults.baseURL}/templates/upload-media`, formData, {
       withCredentials: true,
