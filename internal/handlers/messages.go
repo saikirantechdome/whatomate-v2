@@ -180,7 +180,23 @@ func (a *App) SendOutgoingMessage(ctx context.Context, req OutgoingMessageReques
 			if req.Template == nil {
 				return "", fmt.Errorf("template is required for template messages")
 			}
-			return a.WhatsApp.SendTemplateMessage(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, req.BodyParams)
+			// Build header (media, if any) + body components explicitly so a
+			// media-header template (IMAGE/VIDEO/DOCUMENT) actually carries its
+			// image/video/document when sent directly (not just via campaigns).
+			// Uses the template's captured HeaderMediaID - a real, reusable
+			// WhatsApp media ID - never HeaderContent (Meta's one-time
+			// resumable-upload handle, valid only for template creation).
+			var components []map[string]interface{}
+			if headerComponent := whatsapp.BuildMediaHeaderComponent(req.Template.HeaderType, req.Template.HeaderMediaID); headerComponent != nil {
+				components = append(components, headerComponent)
+			} else if req.Template.HeaderType != "" && req.Template.HeaderType != "TEXT" && req.Template.HeaderType != "NONE" {
+				a.Log.Warn("Template has a media header but no usable media ID; sending without header media",
+					"template", req.Template.Name, "header_type", req.Template.HeaderType)
+			}
+			if bodyComponent := whatsapp.BuildBodyComponent(req.BodyParams); bodyComponent != nil {
+				components = append(components, bodyComponent)
+			}
+			return a.WhatsApp.SendTemplateMessageWithComponents(sendCtx, waAccount, req.Contact.PhoneNumber, req.Template.Name, req.Template.Language, components)
 
 		case models.MessageTypeFlow:
 			if req.FlowID == "" {
@@ -647,4 +663,3 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		"phone_number":  phoneNumber,
 	})
 }
-

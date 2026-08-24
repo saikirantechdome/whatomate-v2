@@ -260,14 +260,8 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 		if mediaID == "" {
 			mediaID = template.HeaderMediaID
 		}
-		if mediaID != "" {
-			headerParam := buildMediaParameter(template.HeaderType, "id", mediaID)
-			if headerParam != nil {
-				components = append(components, map[string]interface{}{
-					"type":       "header",
-					"parameters": []map[string]interface{}{headerParam},
-				})
-			}
+		if headerComponent := whatsapp.BuildMediaHeaderComponent(template.HeaderType, mediaID); headerComponent != nil {
+			components = append(components, headerComponent)
 		} else {
 			w.Log.Warn("Template has a media header but no usable media ID; sending without header media",
 				"template", template.Name, "header_type", template.HeaderType)
@@ -291,28 +285,6 @@ func (w *Worker) sendTemplateMessage(ctx context.Context, account *models.WhatsA
 	}
 
 	return w.WhatsApp.SendTemplateMessageWithComponents(ctx, waAccount, recipient.PhoneNumber, template.Name, template.Language, components)
-}
-
-// buildMediaParameter creates a media parameter for WhatsApp template headers.
-// keyName is "id" for Meta media IDs or "link" for external URLs.
-func buildMediaParameter(headerType, keyName, value string) map[string]interface{} {
-	var mediaType string
-	switch headerType {
-	case "IMAGE":
-		mediaType = "image"
-	case "VIDEO":
-		mediaType = "video"
-	case "DOCUMENT":
-		mediaType = "document"
-	default:
-		return nil
-	}
-	return map[string]interface{}{
-		"type": mediaType,
-		mediaType: map[string]interface{}{
-			keyName: value,
-		},
-	}
 }
 
 // Close cleans up worker resources

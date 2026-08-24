@@ -225,6 +225,83 @@ type TemplateParam struct {
 	} `json:"video,omitempty"`
 }
 
+// BuildBodyComponent builds a WhatsApp template "body" component from a map
+// of parameter name/value pairs. Supports both named (non-numeric keys, e.g.
+// "customer_name") and positional (numeric keys, e.g. "1") templates. Returns
+// nil if bodyParams is empty, so callers can omit the component entirely.
+func BuildBodyComponent(bodyParams map[string]string) map[string]interface{} {
+	if len(bodyParams) == 0 {
+		return nil
+	}
+
+	// Check if using named parameters (non-numeric keys like "name", "order_id")
+	isNamedParams := false
+	for key := range bodyParams {
+		if _, err := strconv.Atoi(key); err != nil {
+			isNamedParams = true
+			break
+		}
+	}
+
+	// Get sorted keys for deterministic ordering
+	keys := make([]string, 0, len(bodyParams))
+	for k := range bodyParams {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	params := make([]map[string]interface{}, 0, len(bodyParams))
+	for _, key := range keys {
+		param := map[string]interface{}{
+			"type": "text",
+			"text": bodyParams[key],
+		}
+		// For named parameters, include the parameter_name field
+		if isNamedParams {
+			param["parameter_name"] = key
+		}
+		params = append(params, param)
+	}
+	return map[string]interface{}{
+		"type":       "body",
+		"parameters": params,
+	}
+}
+
+// BuildMediaHeaderComponent builds a WhatsApp template "header" component
+// that references an already-uploaded, reusable WhatsApp media ID (from the
+// standard Media API - NOT the one-time resumable-upload handle used only
+// for template creation/approval). Returns nil if headerType isn't a media
+// type or mediaID is empty, so callers can skip the header entirely rather
+// than send an invalid reference.
+func BuildMediaHeaderComponent(headerType, mediaID string) map[string]interface{} {
+	if mediaID == "" {
+		return nil
+	}
+	var mediaKey string
+	switch headerType {
+	case "IMAGE":
+		mediaKey = "image"
+	case "VIDEO":
+		mediaKey = "video"
+	case "DOCUMENT":
+		mediaKey = "document"
+	default:
+		return nil
+	}
+	return map[string]interface{}{
+		"type": "header",
+		"parameters": []map[string]interface{}{
+			{
+				"type": mediaKey,
+				mediaKey: map[string]interface{}{
+					"id": mediaID,
+				},
+			},
+		},
+	}
+}
+
 // SendTemplateMessage sends a template message
 func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phoneNumber, templateName, languageCode string, bodyParams map[string]string) (string, error) {
 	template := map[string]interface{}{
@@ -235,41 +312,8 @@ func (c *Client) SendTemplateMessage(ctx context.Context, account *Account, phon
 	}
 
 	// Add body parameters if provided
-	if len(bodyParams) > 0 {
-		// Check if using named parameters (non-numeric keys like "name", "order_id")
-		isNamedParams := false
-		for key := range bodyParams {
-			if _, err := strconv.Atoi(key); err != nil {
-				isNamedParams = true
-				break
-			}
-		}
-
-		// Get sorted keys for deterministic ordering
-		keys := make([]string, 0, len(bodyParams))
-		for k := range bodyParams {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		params := make([]map[string]interface{}, 0, len(bodyParams))
-		for _, key := range keys {
-			param := map[string]interface{}{
-				"type": "text",
-				"text": bodyParams[key],
-			}
-			// For named parameters, include the parameter_name field
-			if isNamedParams {
-				param["parameter_name"] = key
-			}
-			params = append(params, param)
-		}
-		template["components"] = []map[string]interface{}{
-			{
-				"type":       "body",
-				"parameters": params,
-			},
-		}
+	if bodyComponent := BuildBodyComponent(bodyParams); bodyComponent != nil {
+		template["components"] = []map[string]interface{}{bodyComponent}
 	}
 
 	payload := map[string]interface{}{
