@@ -222,6 +222,11 @@ export const templatesService = {
   update: (id: string, data: any) => api.put(`/templates/${id}`, data),
   delete: (id: string) => api.delete(`/templates/${id}`),
   sync: () => api.post('/templates/sync'),
+  // Fetches the real header image/video/document for a template (proxied
+  // through the backend, since Meta's media URLs require a bearer token and
+  // can't be used directly as an <img src>). Use with responseType
+  // 'arraybuffer' and build an object URL from the result.
+  getHeaderMedia: (id: string) => api.get(`/templates/${id}/header-media`, { responseType: 'arraybuffer' }),
   uploadMedia: (accountName: string, file: File, templateId?: string) => {
     const formData = new FormData()
     formData.append('file', file)

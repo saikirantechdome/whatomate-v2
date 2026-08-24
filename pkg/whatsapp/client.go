@@ -224,25 +224,34 @@ type MediaURLResponse struct {
 	MessagingProduct string `json:"messaging_product"`
 }
 
-// GetMediaURL retrieves the download URL for a media file from Meta's API
-func (c *Client) GetMediaURL(ctx context.Context, mediaID string, account *Account) (string, error) {
+// GetMediaInfo retrieves metadata (URL, mime type, size) for a media file from Meta's API
+func (c *Client) GetMediaInfo(ctx context.Context, mediaID string, account *Account) (*MediaURLResponse, error) {
 	url := fmt.Sprintf("%s/%s/%s", c.getBaseURL(), account.APIVersion, mediaID)
 
 	respBody, err := c.doRequest(ctx, http.MethodGet, url, nil, account.AccessToken)
 	if err != nil {
-		return "", fmt.Errorf("failed to get media URL: %w", err)
+		return nil, fmt.Errorf("failed to get media info: %w", err)
 	}
 
 	var mediaResp MediaURLResponse
 	if err := json.Unmarshal(respBody, &mediaResp); err != nil {
-		return "", fmt.Errorf("failed to parse media response: %w", err)
+		return nil, fmt.Errorf("failed to parse media response: %w", err)
 	}
 
 	if mediaResp.URL == "" {
-		return "", fmt.Errorf("no URL in media response")
+		return nil, fmt.Errorf("no URL in media response")
 	}
 
-	return mediaResp.URL, nil
+	return &mediaResp, nil
+}
+
+// GetMediaURL retrieves the download URL for a media file from Meta's API
+func (c *Client) GetMediaURL(ctx context.Context, mediaID string, account *Account) (string, error) {
+	info, err := c.GetMediaInfo(ctx, mediaID, account)
+	if err != nil {
+		return "", err
+	}
+	return info.URL, nil
 }
 
 // DownloadMedia downloads media content from Meta's CDN URL

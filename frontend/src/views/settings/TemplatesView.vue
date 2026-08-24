@@ -64,6 +64,8 @@ const isSubmitting = ref(false)
 const editingTemplate = ref<Template | null>(null)
 const isPreviewOpen = ref(false)
 const previewTemplate = ref<Template | null>(null)
+const previewHeaderMediaUrl = ref<string | null>(null)
+let previewHeaderMediaObjectUrl: string | null = null
 const deleteDialogOpen = ref(false)
 const templateToDelete = ref<Template | null>(null)
 const publishDialogOpen = ref(false)
@@ -269,6 +271,34 @@ function openPreview(template: Template) {
   previewTemplate.value = template
   isPreviewOpen.value = true
 }
+
+// Load the real header image/video for the preview (falls back to the
+// generic icon placeholder if there's no media id yet, or the fetch fails -
+// e.g. an older template that hasn't had its media re-uploaded since the
+// header_media_id fix).
+watch(isPreviewOpen, async (open) => {
+  if (previewHeaderMediaObjectUrl) {
+    URL.revokeObjectURL(previewHeaderMediaObjectUrl)
+    previewHeaderMediaObjectUrl = null
+  }
+  previewHeaderMediaUrl.value = null
+
+  if (!open) return
+  const template = previewTemplate.value
+  const isPreviewableMedia = template?.header_type === 'IMAGE' || template?.header_type === 'VIDEO'
+  if (!template || !isPreviewableMedia || !template.header_media_id) return
+
+  try {
+    const response = await templatesService.getHeaderMedia(template.id)
+    const contentType = response.headers['content-type'] || (template.header_type === 'VIDEO' ? 'video/mp4' : 'image/jpeg')
+    const blob = new Blob([response.data], { type: contentType })
+    const url = URL.createObjectURL(blob)
+    previewHeaderMediaObjectUrl = url
+    previewHeaderMediaUrl.value = url
+  } catch {
+    // Silently keep the generic icon placeholder
+  }
+})
 
 async function saveTemplate() {
   if (!formData.value.name.trim() || !formData.value.body_content.trim()) {
@@ -977,8 +1007,10 @@ function formatPreview(text: string, samples: any[]): string {
                 <div v-if="previewTemplate.header_type === 'TEXT'" class="font-semibold">
                   {{ previewTemplate.header_content }}
                 </div>
-                <div v-else class="h-32 bg-gray-600 light:bg-gray-200 rounded flex items-center justify-center">
-                  <component :is="getHeaderIcon(previewTemplate.header_type)" class="h-8 w-8 text-gray-400" />
+                <div v-else class="h-32 bg-gray-600 light:bg-gray-200 rounded flex items-center justify-center overflow-hidden">
+                  <img v-if="previewTemplate.header_type === 'IMAGE' && previewHeaderMediaUrl" :src="previewHeaderMediaUrl" class="h-full w-full object-cover" />
+                  <video v-else-if="previewTemplate.header_type === 'VIDEO' && previewHeaderMediaUrl" :src="previewHeaderMediaUrl" class="h-full w-full object-cover" controls />
+                  <component v-else :is="getHeaderIcon(previewTemplate.header_type)" class="h-8 w-8 text-gray-400" />
                 </div>
               </div>
 

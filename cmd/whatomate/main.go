@@ -578,6 +578,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 	g.POST("/api/templates/sync", app.SyncTemplates)
 	g.POST("/api/templates/{id}/publish", app.SubmitTemplate)
 	g.POST("/api/templates/upload-media", app.UploadTemplateMedia)
+	g.GET("/api/templates/{id}/header-media", app.GetTemplateHeaderMedia)
 
 	// WhatsApp Flows
 	g.GET("/api/flows", app.ListFlows)

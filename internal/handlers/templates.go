@@ -639,3 +639,58 @@ func (a *App) UploadTemplateMedia(r *fastglue.Request) error {
 		"size":      fileHeader.Size,
 	})
 }
+
+// GetTemplateHeaderMedia proxies a template's header image/video/document
+// from Meta so the admin UI (e.g. the template preview) can display the real
+// file. Meta media URLs require a bearer token, so they can't be used
+// directly as an <img src> - this fetches the bytes server-side and streams
+// them back.
+func (a *App) GetTemplateHeaderMedia(r *fastglue.Request) error {
+	orgID, err := a.getOrgID(r)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Unauthorized", nil, "")
+	}
+
+	id, err := parsePathUUID(r, "id", "template")
+	if err != nil {
+		return nil
+	}
+
+	template, err := findByIDAndOrg[models.Template](a.DB, r, id, orgID, "Template")
+	if err != nil {
+		return nil
+	}
+
+	if template.HeaderMediaID == "" {
+		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "No header media available for this template", nil, "")
+	}
+
+	var account models.WhatsAppAccount
+	if err := a.DB.Where("name = ? AND organization_id = ?", template.WhatsAppAccount, orgID).First(&account).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusBadRequest, "WhatsApp account not found", nil, "")
+	}
+	waAccount := a.toWhatsAppAccount(&account)
+
+	ctx := context.Background()
+	info, err := a.WhatsApp.GetMediaInfo(ctx, template.HeaderMediaID, waAccount)
+	if err != nil {
+		a.Log.Error("Failed to get template header media info", "error", err, "template_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to fetch media from Meta", nil, "")
+	}
+
+	data, err := a.WhatsApp.DownloadMedia(ctx, info.URL, waAccount.AccessToken)
+	if err != nil {
+		a.Log.Error("Failed to download template header media", "error", err, "template_id", id)
+		return r.SendErrorEnvelope(fasthttp.StatusBadGateway, "Failed to download media from Meta", nil, "")
+	}
+
+	contentType := info.MimeType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	r.RequestCtx.Response.Header.Set("Content-Type", contentType)
+	r.RequestCtx.Response.Header.Set("Cache-Control", "private, max-age=3600")
+	r.RequestCtx.SetBody(data)
+
+	return nil
+}
